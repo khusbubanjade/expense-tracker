@@ -10,7 +10,8 @@ import os
 CSV_FILE = "expenses.csv"
 categories = ["Food", "Transport", "Shopping", "Entertainment", "Bills", "Health", "Others"]
 accounts = ["Cash", "Bank", "Credit"]
-budgets = {"Cash": 500, "Bank": 1000, "Credit": 300}  # Example budgets per account
+THRESHOLD = 20000  # minimum total before alerts trigger
+budgets = {"Cash": 2000, "Bank": 20000, "Credit": 2000}  # Example budgets per account
 
 # Load existing data or create new DataFrame
 if os.path.exists(CSV_FILE):
@@ -68,33 +69,44 @@ def add_expense():
     desc_entry.delete(0, tk.END)
 
 def update_dashboard():
+    filtered = get_filtered_data()
+
     # Update table
     for i in tree.get_children():
         tree.delete(i)
-    for idx, row in data.iterrows():
+
+    for idx, row in filtered.iterrows():
         tree.insert("", "end", iid=idx,
             values=(row["Date"], row["Account"], row["Category"],
                     f"${row['Amount']:.2f}", row["Description"]))
 
     # Update summary
-    total = data["Amount"].sum()
-    avg = data["Amount"].mean() if len(data)>0 else 0
+    total = filtered["Amount"].sum()
+    avg = filtered["Amount"].mean() if len(filtered)>0 else 0
     summary_label.config(text=f"Total Spending: ${total:.2f}    Avg Expense: ${avg:.2f}")
 
-    # Check real-time alerts
+    # Check alerts
     alerts_text.delete("1.0", tk.END)
-    THRESHOLD = 20000  # minimum spending before showing alerts
 
     for acc in accounts:
-        spent = data[data["Account"]==acc]["Amount"].sum()
+        spent = filtered[filtered["Account"]==acc]["Amount"].sum()
         budget = budgets.get(acc, 0)
 
-        # Only show alerts if total spending crosses threshold
         if spent > THRESHOLD:
             if spent > budget:
-                alerts_text.insert(tk.END, f"⚠️ Overspending on {acc}: ${spent:.2f} / ${budget}\n")
+                alerts_text.insert(tk.END,
+                    f"⚠️ Overspending on {acc}: ${spent:.2f} / ${budget}\n")
+
+                # popup alert (NEW)
+                messagebox.showwarning(
+                    "Overspending Alert",
+                    f"You exceeded budget in {acc}\nSpent: ${spent:.2f}\nBudget: ${budget}"
+                )
             else:
-                alerts_text.insert(tk.END, f"{acc}: ${spent:.2f} / ${budget}\n")
+                alerts_text.insert(tk.END,
+                    f"{acc}: ${spent:.2f} / ${budget}\n")
+
+    update_chart(filtered)
 
     # Update chart
     update_chart()
@@ -134,26 +146,26 @@ def reset_all():
     global data
     confirm = messagebox.askyesno("Reset All", "Delete ALL expenses permanently?")
     if confirm:
-        data = pd.DataFrame(columns=["Date", "Account", "Category", "Amount"])
+        data = pd.DataFrame(columns=["Date","Account","Category","Amount","Description"])
         save_data()
         update_dashboard()
 
-def update_chart():
+def update_chart(df=None):
+    if df is None:
+        df = data
+
     fig.clear()
-    if data.empty:
+    if df.empty:
         canvas.draw()
         return
-    # Category chart
+
     ax1 = fig.add_subplot(121)
-    cat_sum = data.groupby("Category")["Amount"].sum()
-    cat_sum.plot(kind="bar", ax=ax1, color='tomato')
+    df.groupby("Category")["Amount"].sum().plot(kind="bar", ax=ax1, color='tomato')
     ax1.set_title("Spending by Category")
     ax1.set_ylabel("Amount ($)")
 
-    # Account chart
     ax2 = fig.add_subplot(122)
-    acc_sum = data.groupby("Account")["Amount"].sum()
-    acc_sum.plot(kind="bar", ax=ax2, color='skyblue')
+    df.groupby("Account")["Amount"].sum().plot(kind="bar", ax=ax2, color='skyblue')
     ax2.set_title("Spending by Account")
     ax2.set_ylabel("Amount ($)")
 
@@ -234,6 +246,20 @@ add_btn.grid(row=0,column=4,rowspan=2,padx=10)
 summary_label = tk.Label(root,text="Total Spending: $0.00", font=("Segoe UI",14), bg="#121212", fg="white")
 summary_label.pack(pady=5)
 
+# Month Filter
+months = ["All","January","February","March","April","May","June",
+          "July","August","September","October","November","December"]
+
+month_combo = ttk.Combobox(root, values=months, state="readonly", width=15)
+month_combo.set("All")
+month_combo.pack(pady=5)
+month_combo.bind("<<ComboboxSelected>>", lambda e: update_dashboard())
+
+def get_filtered_data():
+    if month_combo.get()=="All":
+        return data
+    return data[pd.to_datetime(data["Date"]).dt.strftime("%B")==month_combo.get()]
+
 # Editable Table
 tree_frame = tk.Frame(root)
 tree_frame.pack(pady=10, fill="x")
@@ -265,5 +291,5 @@ export_frame.pack(pady=10)
 tk.Button(export_frame,text="Export CSV",command=export_csv,bg="#238636",fg="white").grid(row=0,column=0,padx=10)
 
 # ---------- Initialize ----------
-update_dashboard()
+update_dashboard()  
 root.mainloop()
